@@ -70,6 +70,12 @@ TRYBROKEN=yes
 UNAME_r=\$(freebsd-version)
 USE_PACKAGE_DEPENDS=yes
 "
+# The dependency graphs of the individual ports overlap heavily, so collect
+# them first and fetch each dependency only once afterwards.  Evaluating a
+# port makefile is by far the most expensive part of this step, and the naive
+# walk repeats it for every single edge of the graph.
+: > /.distfiles-depends
+
 echo "${PORTSLIST}" | while read PORT_ORIGIN; do
 	echo ">>> Fetching \${PORT_ORIGIN}..."
 	FLAVOR=\${PORT_ORIGIN##*@}
@@ -84,23 +90,30 @@ echo "${PORTSLIST}" | while read PORT_ORIGIN; do
 		fi
 		echo ">>> Failed fetching \${PORT}" >> ${STAGEDIR}/.pkg-msg
 	fi
-	PORT_DEPENDS=\$(make -C ${PORTSDIR}/\${PORT} all-depends-list \
-	    \${MAKE_ARGS})
-	for PORT_DEPEND in \${PORT_DEPENDS}; do
-		FLAVOR=\${PORT_DEPEND##*@}
-		FLAVOR_ARG=
-		if [ "\${FLAVOR}" != "\${PORT_DEPEND}" ]; then
-			FLAVOR_ARG="FLAVOR=\${FLAVOR}"
-		fi
-		PORT=\${PORT_DEPEND%%@*}
-		if ! make -C \${PORT} fetch \${MAKE_ARGS} \${FLAVOR_ARG}; then
-			if [ -n "${PRODUCT_REBUILD}" ]; then
-				exit 1
-			fi
-			echo ">>> Failed fetching \${PORT}" >> ${STAGEDIR}/.pkg-msg
-		fi
-	done
+	make -C ${PORTSDIR}/\${PORT} all-depends-list \${MAKE_ARGS} | \
+	    tr '[:space:]' '\\n' >> /.distfiles-depends
 done
+
+sort -u /.distfiles-depends | while read PORT_DEPEND; do
+	if [ -z "\${PORT_DEPEND}" ]; then
+		continue
+	fi
+	echo ">>> Fetching \${PORT_DEPEND}..."
+	FLAVOR=\${PORT_DEPEND##*@}
+	FLAVOR_ARG=
+	if [ "\${FLAVOR}" != "\${PORT_DEPEND}" ]; then
+		FLAVOR_ARG="FLAVOR=\${FLAVOR}"
+	fi
+	PORT=\${PORT_DEPEND%%@*}
+	if ! make -C \${PORT} fetch \${MAKE_ARGS} \${FLAVOR_ARG}; then
+		if [ -n "${PRODUCT_REBUILD}" ]; then
+			exit 1
+		fi
+		echo ">>> Failed fetching \${PORT}" >> ${STAGEDIR}/.pkg-msg
+	fi
+done
+
+rm -f /.distfiles-depends
 EOF
 
 # unblock SIGINT

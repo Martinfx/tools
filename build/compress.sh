@@ -35,9 +35,15 @@ for ARG in ${@}; do
 	case ${ARG} in
 	arm|dvd|nano|serial|vga|vm)
 		for IMAGE in $(find ${IMAGESDIR} -name \
-		    "*-${ARG}-*" \! -name "*.bz2" \! -name "*.sig"); do
-			echo -n ">>> Compressing ${ARG} image... "
-			bzip2 ${IMAGE}
+		    "*-${ARG}-*" \! -name "*.bz2" \! -name "*.sig" \
+		    \! -name "*.tmp"); do
+			echo -n ">>> Compressing ${ARG} image via ${BZIP2_COMPRESS%% *}... "
+			# only let the result take its final name once it is
+			# complete, so a failed run cannot be mistaken for a
+			# finished image later on
+			${BZIP2_COMPRESS} < ${IMAGE} > ${IMAGE}.bz2.tmp
+			mv ${IMAGE}.bz2.tmp ${IMAGE}.bz2
+			rm -f ${IMAGE}
 			echo "done"
 		done
 		;;

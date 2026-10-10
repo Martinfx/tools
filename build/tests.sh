@@ -43,6 +43,8 @@ git_version ${SRCDIR}
 
 TESTSSET=${SETSDIR}/tests-${PRODUCT_VERSION}-${PRODUCT_ARCH}.txz
 
+setup_metamode
+
 MAKE_ARGS="
 TARGET_ARCH=${PRODUCT_ARCH}
 TARGET=${PRODUCT_TARGET}
@@ -50,6 +52,7 @@ SRCCONF=${CONFIGDIR}/src.conf
 WITHOUT_DEBUG_FILES=yes
 __MAKE_CONF=
 ${MAKE_ARGS_DEV}
+${MAKE_ARGS_META}
 "
 
 ${ENV_FILTER} make -C${SRCDIR}/lib/libnetbsd -j${CPUS} all ${MAKE_ARGS}

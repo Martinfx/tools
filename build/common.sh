@@ -225,7 +225,40 @@ for MISSING in ${CHECK_MISSING}; do
 done
 
 # misc. foo
-export CPUS=$(sysctl kern.smp.cpus | awk '{ print $2 }')
+export CPUS=${PRODUCT_JOBS:-$(sysctl -n kern.smp.cpus)}
+
+# a bogus job count would otherwise resurface as a puzzling make(1) error
+case "${CPUS}" in
+''|*[!0-9]*)
+	echo "${0}: JOBS must be a positive number, got '${CPUS}'" >&2
+	exit 1
+	;;
+esac
+
+if [ "${CPUS}" -lt 1 ]; then
+	echo "${0}: JOBS must be at least 1" >&2
+	exit 1
+fi
+
+# Archive compression is a large chunk of the wall clock time spent on sets
+# and images, so spread it over all cores.  xz(1) scales the thread count
+# back on its own once the memory limit says so, which keeps the peak
+# footprint sane on builders with a lot of them.  Note that libarchive does
+# not thread its built-in xz support, hence the explicit pipes below.
+export XZ_COMPRESS="xz -T ${CPUS} --memlimit-compress=50%"
+export XZ_DECOMPRESS="xz -d -T ${CPUS} --memlimit-decompress=50%"
+
+# bzip2(1) has no threading at all, but lbzip2 and pbzip2 write the exact
+# same format and spread the work over every core, so pick one up when the
+# builder happens to have it installed.  Anything out there can still read
+# the result with plain bzip2(1).
+if [ -n "$(which lbzip2 2> /dev/null)" ]; then
+	export BZIP2_COMPRESS="lbzip2 -c -n ${CPUS}"
+elif [ -n "$(which pbzip2 2> /dev/null)" ]; then
+	export BZIP2_COMPRESS="pbzip2 -c -p${CPUS}"
+else
+	export BZIP2_COMPRESS="bzip2 -c"
+fi
 export CONFIG_XML="/usr/local/etc/config.xml"
 export ABI_FILE="/usr/lib/crt1.o"
 export ENV_FILTER="env -i USER=${USER} LOGNAME=${LOGNAME} HOME=${HOME} \
@@ -621,7 +654,7 @@ setup_base()
 {
 	echo ">>> Setting up base in ${1}"
 
-	tar -C ${1} -xpf ${SETSDIR}/base-*-${PRODUCT_ARCH}${PRODUCT_DEVICE+"-${PRODUCT_DEVICE}"}.txz
+	extract_set ${1} ${SETSDIR}/base-*-${PRODUCT_ARCH}${PRODUCT_DEVICE+"-${PRODUCT_DEVICE}"}.txz
 	rm -f ${1}/.abi_hint
 
 	# /home is needed for LiveCD images, and since it
@@ -639,7 +672,7 @@ setup_kernel()
 {
 	echo ">>> Setting up kernel in ${1}"
 
-	tar -C ${1} -xpf ${SETSDIR}/kernel-*-${PRODUCT_ARCH}${PRODUCT_DEVICE+"-${PRODUCT_DEVICE}"}.txz
+	extract_set ${1} ${SETSDIR}/kernel-*-${PRODUCT_ARCH}${PRODUCT_DEVICE+"-${PRODUCT_DEVICE}"}.txz
 	rm -f ${1}/.abi_hint
 }
 
@@ -689,8 +722,29 @@ setup_entropy()
 
 setup_set()
 {
-	tar -C ${1} -xJpf ${2}
+	extract_set ${1} ${2}
 	rm -f ${1}/.abi_hint
+}
+
+# libarchive decodes xz on a single thread no matter how the archive was
+# written, so hand the job to xz(1) instead: streams produced by a threaded
+# run carry independent blocks and decode in parallel, and anything older
+# simply falls back to the single-threaded path.
+extract_set()
+{
+	local EXTRACT_DIR="${1}"
+
+	shift
+
+	# callers pass a glob and the sets are cleaned before each build, so
+	# more than one match means the sets directory is not what we think
+	# it is and the resulting image would be anyone's guess
+	if [ ${#} -ne 1 ]; then
+		echo "${0}: Expected a single set to extract, got: ${*}" >&2
+		exit 1
+	fi
+
+	${XZ_DECOMPRESS} -c ${1} | tar -C "${EXTRACT_DIR}" -xpf -
 }
 
 generate_set()
@@ -698,7 +752,7 @@ generate_set()
 	echo ">>> Generating set:"
 
 	echo ${SRCABI} > ${1}/.abi_hint
-	tar -C ${1} -cvf - . | xz > ${2}
+	tar -C ${1} -cvf - . | ${XZ_COMPRESS} > ${2}
 }
 
 generate_signature()
@@ -890,10 +944,8 @@ prune_packages()
 		# some packages clash in files with others, check for conflicts
 		PKGORIGIN=$(pkg -c ${1} info -F ${PKG} | \
 		    grep ^Origin | awk '{ print $3; }')
-		PKGGLOBS=
-		for CONFLICTS in CONFLICTS CONFLICTS_INSTALL; do
-			PKGGLOBS="${PKGGLOBS} $(make -C ${PORTSDIR}/${PKGORIGIN} -v ${CONFLICTS} PHP_DEFAULT=${PRODUCT_PHP})"
-		done
+		PKGGLOBS=$(make_vars ${PORTSDIR}/${PKGORIGIN} \
+		    "PHP_DEFAULT=${PRODUCT_PHP}" CONFLICTS CONFLICTS_INSTALL)
 		for PKGGLOB in ${PKGGLOBS}; do
 			pkg -c ${1} remove -gy "${PKGGLOB}" || true
 		done
@@ -1288,6 +1340,53 @@ list_config()
 		fi
 		echo ${LIST_ORIGIN}
 	done
+}
+
+# WITH_META_MODE lets bmake skip the targets whose inputs did not change,
+# which is what turns a repeated buildworld from hours into minutes.  It
+# leans on filemon(4) to learn which files a command really touched and
+# share/mk/meta.sys.mk refuses to run without it, so make sure the module is
+# there before we hand the build a mode it cannot honour.
+setup_metamode()
+{
+	export MAKE_ARGS_META=
+
+	if [ -z "${PRODUCT_METAMODE}" ]; then
+		return
+	fi
+
+	if [ ! -c /dev/filemon ]; then
+		kldload filemon || true
+	fi
+
+	if [ ! -c /dev/filemon ]; then
+		echo "${0}: METAMODE requires the filemon(4) module" >&2
+		echo "To fix this please run 'kldload filemon'" >&2
+		exit 1
+	fi
+
+	export MAKE_ARGS_META="WITH_META_MODE=yes"
+}
+
+# Walking the core and plugin trees costs one makefile parse per lookup, and
+# the parse dwarfs the lookup itself.  bmake prints one line per -v, using a
+# blank line for an empty or undefined variable, so a batch of queries can
+# share a single invocation while the line numbering stays predictable.
+make_vars()
+{
+	local QUERY_DIR="${1}"
+	local QUERY_ARGS="${2}"
+	local QUERY_VARS=
+	local QUERY_VAR
+
+	shift
+	shift
+
+	for QUERY_VAR in ${@}; do
+		QUERY_VARS="${QUERY_VARS} -v ${QUERY_VAR}"
+	done
+
+	make -C "${QUERY_DIR}" ${QUERY_ARGS} ${QUERY_VARS}
 }
 
 list_packages()

@@ -69,7 +69,9 @@ Available build options are:
 * COMSPEED:	serial speed, e.g. "115200" (default)
 * DEBUG:	build a debug kernel with additional object information
 * DEVICE:	loads device-specific modifications, e.g. "A10" (default)
+* JOBS:		parallel jobs to use, defaults to the number of CPUs
 * KERNEL:	the kernel config to use, e.g. SMP (default)
+* METAMODE:	reliable incremental src builds via filemon(4) when set
 * MIRRORS:	a list of mirrors to prefetch sets from
 * NAME:		"OPNsense" (default)
 * PRIVKEY:	the private key for signing sets
@@ -101,6 +103,42 @@ and to avoid excessive Makefile arguments.
 
 A local override exists as "CONFIGDIR/build.conf.local" and is
 parsed first to allow more flexible overrides.  Use with care.
+
+How to shorten the build
+------------------------
+
+A full build is dominated by compiling, but a fair share of its wall clock
+time goes into compressing sets and images and into evaluating port
+makefiles.  The following knobs address the latter.
+
+By default every step uses as many jobs as the machine has CPUs.  Lower
+JOBS to leave room for other work, or raise it past the CPU count when the
+build spends its time waiting on disk rather than on the compiler:
+
+    # make base JOBS=8
+
+Set compression uses all CPUs through xz(1) and scales the thread count
+back on its own when memory gets tight.  Image compression falls back to
+single-threaded bzip2(1) unless one of its parallel drop-in replacements is
+installed, which is worth doing when images are built regularly:
+
+    # pkg install lbzip2
+
+Both write plain bzip2 format, so the resulting images stay readable
+everywhere.  lbzip2 is preferred over pbzip2 when both are present.
+
+METAMODE turns on WITH_META_MODE for the base, kernel and tests steps.
+Together with the WITHOUT_CLEAN already set in src.conf this makes repeated
+src builds skip the targets whose inputs did not change, which is the
+difference between rebuilding the world and rebuilding what moved:
+
+    # kldload filemon
+    # make base METAMODE=yes
+
+The filemon(4) module is required and the step aborts without it, since
+dependency tracking is what makes the result trustworthy.  Note that meta
+mode decides what to rebuild from recorded state, so when a build misses a
+change the way out is a clean base rather than another incremental run.
 
 How to run individual or composite build steps
 ----------------------------------------------

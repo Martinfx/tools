@@ -66,6 +66,6 @@ ${ENV_FILTER} make -C${SRCDIR} ${MAKE_ARGS} native-xtools-install \
 
 echo -n ">>> Generating xtools set... "
 
-tar -C ${STAGEDIR}/nxb-bin -cJf ${XTOOLSET} .
+tar -C ${STAGEDIR}/nxb-bin -cf - . | ${XZ_COMPRESS} > ${XTOOLSET}
 
 echo "done"

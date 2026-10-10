@@ -60,9 +60,12 @@ for BRANCH in ${EXTRABRANCH} ${COREBRANCH}; do
 		CORE_ARGS="${CORE_ARGS} ${CORE_PKGVERSION}"
 	fi
 
-	CORE_NAME=$(make -C ${STAGEDIR}${COREDIR} ${CORE_ARGS} -v CORE_NAME)
-	CORE_DEPS=$(make -C ${STAGEDIR}${COREDIR} ${CORE_ARGS} -v CORE_DEPENDS)
-	CORE_VERS=$(make -C ${STAGEDIR}${COREDIR} ${CORE_ARGS} -v CORE_PKGVERSION)
+	CORE_META=$(make_vars ${STAGEDIR}${COREDIR} "${CORE_ARGS}" \
+	    CORE_NAME CORE_DEPENDS CORE_PKGVERSION)
+
+	CORE_NAME=$(echo "${CORE_META}" | sed -n 1p)
+	CORE_DEPS=$(echo "${CORE_META}" | sed -n 2p)
+	CORE_VERS=$(echo "${CORE_META}" | sed -n 3p)
 
 	for REMOVED in ${@}; do
 		if [ ${REMOVED} = ${CORE_NAME} ]; then

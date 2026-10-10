@@ -60,6 +60,8 @@ else
 	echo ">>> Attempting to use external kernel: ${PRODUCT_KERNEL}"
 fi
 
+setup_metamode
+
 MAKE_ARGS="
 TARGET_ARCH=${PRODUCT_ARCH}
 TARGET=${PRODUCT_TARGET}
@@ -68,6 +70,7 @@ SRCCONF=${CONFIGDIR}/src.conf
 ${SRCDEBUG}
 __MAKE_CONF=
 ${MAKE_ARGS_DEV}
+${MAKE_ARGS_META}
 "
 
 ${ENV_FILTER} make -s -C${SRCDIR} -j${CPUS} kernel-toolchain ${MAKE_ARGS}
