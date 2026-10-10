@@ -140,6 +140,62 @@ dependency tracking is what makes the result trustworthy.  Note that meta
 mode decides what to rebuild from recorded state, so when a build misses a
 change the way out is a clean base rather than another incremental run.
 
+How to build the ports with poudriere
+-------------------------------------
+
+The ports step builds one port at a time.  poudriere builds many at once,
+and the poudriere step wires it up against this configuration so that a
+run covers the same ports with the same options:
+
+    # make poudriere-conf
+    # make poudriere-jail
+    # make poudriere-ports
+    # make poudriere-dry
+    # make poudriere-bulk
+
+The commands can also be chained in one invocation, e.g.
+"make poudriere-conf,jail,ports,bulk".
+
+What each one does:
+
+* conf:		writes the jail's make.conf and src.conf under
+		"/usr/local/etc/poudriere.d", derived from this
+		configuration, so the options match the ports step
+* jail:		creates or updates the build jail from SRCDIR
+* ports:	registers PORTSDIR as a null-mounted ports tree, leaving
+		the tree itself under our own git control
+* dry:		prints what a build would do and builds nothing
+* bulk:		runs the build, honouring JOBS as the number of builders
+
+Start "make poudriere-dry" before a real run: it lists what poudriere
+intends to build and is the cheapest way to confirm the selection.  The
+port list it works off is written to "make print-TARGETDIR"/poudriere.list
+and is regenerated on every dry and bulk run, so it always reflects the
+configuration as it stands rather than whatever was listed last time.
+
+Run "make base" first.  The jail is installed out of the object directory
+that step leaves behind instead of compiling the world a second time, and
+without it there is nothing to install from.
+
+poudriere itself needs to be installed and configured beforehand, which
+means at least a pool or NO_ZFS, BASEFS and a distfiles cache in
+"/usr/local/etc/poudriere.conf".  That file belongs to the host and this
+step does not write it.
+
+Note that poudriere turns off make jobs inside a port unless
+ALLOW_MAKE_JOBS is set, so the parallelism moves from inside a port to
+between ports.  That is the better trade for a list this long, because
+configure runs stop leaving cores idle.
+
+Three things this step deliberately does not do:
+
+* It does not produce the package set the other steps consume, so
+  plugins, core and the images keep using the ports step for now.
+* The build-only ports in "aux.conf" land in the poudriere repository
+  like any other dependency instead of in a separate set.
+* The ports step pins pkg to "opnsense/pkg" while poudriere bootstraps
+  its own from the tree.
+
 How to run individual or composite build steps
 ----------------------------------------------
 

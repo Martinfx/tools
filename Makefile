@@ -27,9 +27,9 @@ IMAGES=		arm dvd nano serial vga vm
 STEPS=		audit arm base boot chroot clean clone compress confirm \
 		connect core distfiles download dvd fingerprint info \
 		kernel list make.conf nano obsolete options packages \
-		pkgbase plugins ports prefetch print rebase release \
-		rename serial sign skim sync test tests update upload \
-		verify vga vm xtools
+		pkgbase plugins ports poudriere prefetch print rebase \
+		release rename serial sign skim sync test tests update \
+		upload verify vga vm xtools
 SCRIPTS=	custom distribution hotfix nightly pkgver source watch
 
 .PHONY:		${STEPS} ${SCRIPTS}
